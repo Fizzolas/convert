@@ -34,6 +34,10 @@ function normalizeMimeType (mime: string) {
     case "application/musicxml": return "application/vnd.recordare.musicxml+xml";
     case "application/musicxml+xml": return "application/vnd.recordare.musicxml+xml";
     case "text/mathml": return "application/mathml+xml";
+    case "text/json": return "application/json";
+    case "text/x-json": return "application/json";
+    case "text/json5": return "application/json5";
+    case "application/x-json5": return "application/json5";
     case "video/x-ms-wmv": return "video/x-ms-asf";
   }
   return mime;
