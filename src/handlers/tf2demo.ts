@@ -18,6 +18,7 @@
 // This is the same approach used by ffmpeg.wasm's own test suite and is
 // guaranteed to produce output as long as FFmpeg loads successfully.
 
+import type { FileData, FileFormat, FormatHandler } from "../FormatHandler.ts";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL } from "@ffmpeg/util";
 
@@ -30,14 +31,14 @@ async function getFFmpeg(): Promise<FFmpeg> {
   const ff = new FFmpeg();
   const base = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
   await ff.load({
-    coreURL: await toBlobURL(`${base}/ffmpeg-core.js`,   "text/javascript"),
+    coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
     wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
   });
   _ff = ff;
   return ff;
 }
 
-// ─── Binary helpers ───────────────────────────────────────────────────────────
+// ─── Binary helpers ─────────────────────────────────────────────────────────
 
 function readStr(b: Uint8Array, off: number, max: number): string {
   let s = "";
@@ -50,7 +51,7 @@ function readStr(b: Uint8Array, off: number, max: number): string {
 }
 
 function ri32(b: Uint8Array, o: number): number {
-  return (b[o] | b[o+1]<<8 | b[o+2]<<16 | (b[o+3]<<24));
+  return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24));
 }
 
 function rf32(b: Uint8Array, o: number): number {
@@ -58,7 +59,7 @@ function rf32(b: Uint8Array, o: number): number {
   return v.getFloat32(0, true);
 }
 
-// ─── Demo header ──────────────────────────────────────────────────────────────
+// ─── Demo header ──────────────────────────────────────────────────────────
 
 interface Header {
   demoProtocol: number;
@@ -77,37 +78,37 @@ function parseHeader(b: Uint8Array): Header | null {
   if (b.length < 1072) return null;
   if (readStr(b, 0, 8) !== "HL2DEMO") return null;
   return {
-    demoProtocol:    ri32(b, 8),
+    demoProtocol: ri32(b, 8),
     networkProtocol: ri32(b, 12),
-    serverName:      readStr(b, 16,  260),
-    clientName:      readStr(b, 276, 260),
-    mapName:         readStr(b, 536, 260),
-    gameDir:         readStr(b, 796, 260),
-    playbackTime:    rf32(b, 1056),
-    playbackTicks:   ri32(b, 1060),
-    playbackFrames:  ri32(b, 1064),
-    signOnLength:    ri32(b, 1068),
+    serverName: readStr(b, 16, 260),
+    clientName: readStr(b, 276, 260),
+    mapName: readStr(b, 536, 260),
+    gameDir: readStr(b, 796, 260),
+    playbackTime: rf32(b, 1056),
+    playbackTicks: ri32(b, 1060),
+    playbackFrames: ri32(b, 1064),
+    signOnLength: ri32(b, 1068),
   };
 }
 
-// ─── Frame types ──────────────────────────────────────────────────────────────
+// ─── Frame types ──────────────────────────────────────────────────────────
 
-const FT_SIGNON       = 1;
-const FT_PACKET       = 2;
-const FT_SYNCTICK     = 3;
-const FT_CONSOLECMD   = 4;
-const FT_USERCMD      = 5;
-const FT_DATATABLES   = 6;
-const FT_STOP         = 7;
+const FT_SIGNON = 1;
+const FT_PACKET = 2;
+const FT_SYNCTICK = 3;
+const FT_CONSOLECMD = 4;
+const FT_USERCMD = 5;
+const FT_DATATABLES = 6;
+const FT_STOP = 7;
 const FT_STRINGTABLES = 8;
 
-// ─── Parsed tick sample ───────────────────────────────────────────────────────
+// ─── Parsed tick sample ──────────��────────────────────────────────────────────
 
 interface Sample {
   tick: number;
-  x: number;   // world X
-  y: number;   // world Y
-  z: number;   // world Z (elevation)
+  x: number; // world X
+  y: number; // world Y
+  z: number; // world Z (elevation)
   yaw: number; // view yaw in degrees
 }
 
@@ -137,18 +138,26 @@ function parseFrames(b: Uint8Array, start: number, totalTicks: number): ParseRes
         // Actual Valve layout per CmdInfo: 4 + 12 + 12 + 12 + ... = 76 bytes × 2 = 152
         // viewOrigin starts at byte 4 within first CmdInfo block
         if (o + 152 <= b.length) {
-          const ox  = rf32(b, o + 4);
-          const oy  = rf32(b, o + 8);
-          const oz  = rf32(b, o + 12);
+          const ox = rf32(b, o + 4);
+          const oy = rf32(b, o + 8);
+          const oz = rf32(b, o + 12);
           const yaw = rf32(b, o + 20); // viewAngles[1] = yaw
-          if (isFinite(ox) && isFinite(oy) && isFinite(oz) && Math.abs(ox) < 32768 && Math.abs(oy) < 32768) {
+          if (
+            isFinite(ox) &&
+            isFinite(oy) &&
+            isFinite(oz) &&
+            Math.abs(ox) < 32768 &&
+            Math.abs(oy) < 32768
+          ) {
             samples.push({ tick, x: ox, y: oy, z: oz, yaw });
           }
         }
         o += 152 + 8; // CmdInfo + seqIn + seqOut
         if (o + 4 > b.length) return { samples, totalTicks: tick, tickRate: 66 };
-        const mlen = ri32(b, o); o += 4;
-        if (mlen < 0 || o + mlen > b.length) return { samples, totalTicks: tick, tickRate: 66 };
+        const mlen = ri32(b, o);
+        o += 4;
+        if (mlen < 0 || o + mlen > b.length)
+          return { samples, totalTicks: tick, tickRate: 66 };
         o += mlen;
         break;
       }
@@ -156,24 +165,30 @@ function parseFrames(b: Uint8Array, start: number, totalTicks: number): ParseRes
         break;
       case FT_CONSOLECMD: {
         if (o + 4 > b.length) return { samples, totalTicks: tick, tickRate: 66 };
-        const l = ri32(b, o); o += 4;
-        if (l < 0 || o + l > b.length) return { samples, totalTicks: tick, tickRate: 66 };
+        const l = ri32(b, o);
+        o += 4;
+        if (l < 0 || o + l > b.length)
+          return { samples, totalTicks: tick, tickRate: 66 };
         o += l;
         break;
       }
       case FT_USERCMD: {
         if (o + 8 > b.length) return { samples, totalTicks: tick, tickRate: 66 };
         o += 4; // outgoing sequence
-        const l = ri32(b, o); o += 4;
-        if (l < 0 || o + l > b.length) return { samples, totalTicks: tick, tickRate: 66 };
+        const l = ri32(b, o);
+        o += 4;
+        if (l < 0 || o + l > b.length)
+          return { samples, totalTicks: tick, tickRate: 66 };
         o += l;
         break;
       }
       case FT_DATATABLES:
       case FT_STRINGTABLES: {
         if (o + 4 > b.length) return { samples, totalTicks: tick, tickRate: 66 };
-        const l = ri32(b, o); o += 4;
-        if (l < 0 || o + l > b.length) return { samples, totalTicks: tick, tickRate: 66 };
+        const l = ri32(b, o);
+        o += 4;
+        if (l < 0 || o + l > b.length)
+          return { samples, totalTicks: tick, tickRate: 66 };
         o += l;
         break;
       }
@@ -182,25 +197,27 @@ function parseFrames(b: Uint8Array, start: number, totalTicks: number): ParseRes
     }
   }
 
-  const lastTick = samples.length > 0 ? samples[samples.length - 1].tick : totalTicks;
+  const lastTick =
+    samples.length > 0 ? samples[samples.length - 1].tick : totalTicks;
   const duration = lastTick / 66;
-  const tickRate = duration > 0 && lastTick > 0 ? Math.round(lastTick / duration) : 66;
+  const tickRate =
+    duration > 0 && lastTick > 0 ? Math.round(lastTick / duration) : 66;
   return { samples, totalTicks: lastTick, tickRate };
 }
 
-// ─── Canvas constants ─────────────────────────────────────────────────────────
+// ─── Canvas constants ────────────────────────────────────────────────────────
 
-const W   = 1280;
-const H   = 720;
+const W = 1280;
+const H = 720;
 const FPS = 30;
 
 // TF2 team colours
-const RED  = "#cf4040";
-const BLU  = "#4078b0";
+const RED = "#cf4040";
+const BLU = "#4078b0";
 const RED_GLOW = "rgba(207,64,64,0.25)";
 const BLU_GLOW = "rgba(64,120,176,0.25)";
-const BG_DARK  = "#0d1117";
-const BG_MAP   = "#111820";
+const BG_DARK = "#0d1117";
+const BG_MAP = "#111820";
 const GRID_COL = "rgba(255,255,255,0.04)";
 const TRAIL_RED = "rgba(207,64,64,0.35)";
 const TRAIL_BLU = "rgba(64,120,176,0.35)";
@@ -209,8 +226,9 @@ const TRAIL_BLU = "rgba(64,120,176,0.35)";
 
 function teamFromName(name: string): "red" | "blu" {
   let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return (h & 1) ? "red" : "blu";
+  for (let i = 0; i < name.length; i++)
+    h = ((h * 31 + name.charCodeAt(i)) >>> 0);
+  return h & 1 ? "red" : "blu";
 }
 
 // ─── TF2-flavoured player icon drawn with Canvas 2D math ─────────────────────
@@ -219,17 +237,18 @@ function teamFromName(name: string): "red" | "blu" {
 
 function drawPlayerIcon(
   ctx: OffscreenCanvasRenderingContext2D,
-  px: number, py: number,
+  px: number,
+  py: number,
   yawDeg: number,
   team: "red" | "blu",
   isActive: boolean,
   label: string,
-  subLabel: string,
+  subLabel: string
 ) {
   const color = team === "red" ? RED : BLU;
-  const glow  = team === "red" ? RED_GLOW : BLU_GLOW;
-  const yaw   = (yawDeg * Math.PI) / 180;
-  const R     = isActive ? 10 : 7;
+  const glow = team === "red" ? RED_GLOW : BLU_GLOW;
+  const yaw = (yawDeg * Math.PI) / 180;
+  const R = isActive ? 10 : 7;
 
   // Glow halo
   ctx.beginPath();
@@ -290,7 +309,11 @@ function drawPlayerIcon(
 
 // ─── TF2 logo mark (drawn with math, top-left corner) ─────────────────────────
 
-function drawTF2Logo(ctx: OffscreenCanvasRenderingContext2D, x: number, y: number) {
+function drawTF2Logo(
+  ctx: OffscreenCanvasRenderingContext2D,
+  x: number,
+  y: number
+) {
   // Bold outlined "TF2" lettering using rect primitives — recognisably TF2-style
   ctx.save();
   ctx.translate(x, y);
@@ -319,8 +342,11 @@ function drawTF2Logo(ctx: OffscreenCanvasRenderingContext2D, x: number, y: numbe
 
 function drawMapPlane(
   ctx: OffscreenCanvasRenderingContext2D,
-  mapX: number, mapY: number, mapW: number, mapH: number,
-  mapName: string,
+  mapX: number,
+  mapY: number,
+  mapW: number,
+  mapH: number,
+  mapName: string
 ) {
   // Base fill
   ctx.fillStyle = BG_MAP;
@@ -331,10 +357,16 @@ function drawMapPlane(
   ctx.lineWidth = 1;
   const gridStep = 40;
   for (let gx = mapX; gx <= mapX + mapW; gx += gridStep) {
-    ctx.beginPath(); ctx.moveTo(gx, mapY); ctx.lineTo(gx, mapY + mapH); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(gx, mapY);
+    ctx.lineTo(gx, mapY + mapH);
+    ctx.stroke();
   }
   for (let gy = mapY; gy <= mapY + mapH; gy += gridStep) {
-    ctx.beginPath(); ctx.moveTo(mapX, gy); ctx.lineTo(mapX + mapW, gy); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(mapX, gy);
+    ctx.lineTo(mapX + mapW, gy);
+    ctx.stroke();
   }
 
   // Subtle map name watermark in centre
@@ -343,7 +375,11 @@ function drawMapPlane(
   ctx.font = "bold 48px Arial Black, Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(mapName.toUpperCase(), mapX + mapW / 2, mapY + mapH / 2 + 16);
+  ctx.fillText(
+    mapName.toUpperCase(),
+    mapX + mapW / 2,
+    mapY + mapH / 2 + 16
+  );
   ctx.restore();
   ctx.textAlign = "left";
 
@@ -353,16 +389,19 @@ function drawMapPlane(
   ctx.strokeRect(mapX, mapY, mapW, mapH);
 }
 
-// ─── HUD panel ────────────────────────────────────────────────────────────────
+// ─── HUD panel ───────────────────────────────────────────────────────────
 
 function drawHUD(
   ctx: OffscreenCanvasRenderingContext2D,
-  hx: number, hy: number, hw: number, hh: number,
+  hx: number,
+  hy: number,
+  hw: number,
+  hh: number,
   header: Header,
   currentTimeSec: number,
   sampleCount: number,
   frameIdx: number,
-  totalFrames: number,
+  totalFrames: number
 ) {
   // Panel background
   ctx.fillStyle = "rgba(10,14,20,0.92)";
@@ -379,16 +418,19 @@ function drawHUD(
 
   // Divider
   ctx.strokeStyle = "rgba(255,255,255,0.1)";
-  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(hx + hw - 12, py); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(hx + hw - 12, py);
+  ctx.stroke();
   py += 10;
 
   // Info rows
   const infoRows: [string, string][] = [
-    ["MAP",    header.mapName  || "unknown"],
+    ["MAP", header.mapName || "unknown"],
     ["SERVER", (header.serverName || "unknown").slice(0, 28)],
     ["CLIENT", (header.clientName || "unknown").slice(0, 28)],
-    ["DIR",    (header.gameDir    || "unknown").slice(0, 28)],
-    ["TICKS",  `${header.playbackTicks}`],
+    ["DIR", (header.gameDir || "unknown").slice(0, 28)],
+    ["TICKS", `${header.playbackTicks}`],
     ["DURATION", `${header.playbackTime.toFixed(1)}s`],
     ["SAMPLES", `${sampleCount}`],
   ];
@@ -405,12 +447,15 @@ function drawHUD(
 
   py += 4;
   ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(hx + hw - 12, py); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(hx + hw - 12, py);
+  ctx.stroke();
   py += 14;
 
   // Current time display
-  const mm  = String(Math.floor(currentTimeSec / 60)).padStart(2, "0");
-  const ss  = String(Math.floor(currentTimeSec % 60)).padStart(2, "0");
+  const mm = String(Math.floor(currentTimeSec / 60)).padStart(2, "0");
+  const ss = String(Math.floor(currentTimeSec % 60)).padStart(2, "0");
   const tmm = String(Math.floor(header.playbackTime / 60)).padStart(2, "0");
   const tss = String(Math.floor(header.playbackTime % 60)).padStart(2, "0");
 
@@ -449,7 +494,7 @@ function renderFrame(
   header: Header,
   samples: Sample[],
   frameIdx: number,
-  totalFrames: number,
+  totalFrames: number
 ) {
   const t = totalFrames > 1 ? frameIdx / (totalFrames - 1) : 0;
   const currentTimeSec = t * header.playbackTime;
@@ -469,7 +514,7 @@ function renderFrame(
   const HUD_H = H;
 
   // Map padding (inner drawing area)
-  const PAD   = 48;
+  const PAD = 48;
   const INNER_X = MAP_X + PAD;
   const INNER_Y = MAP_Y + PAD;
   const INNER_W = MAP_W - PAD * 2;
@@ -478,7 +523,10 @@ function renderFrame(
   drawMapPlane(ctx, INNER_X, INNER_Y, INNER_W, INNER_H, header.mapName);
 
   // Compute world bounds from all samples
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
   for (const s of samples) {
     if (s.x < minX) minX = s.x;
     if (s.x > maxX) maxX = s.x;
@@ -490,18 +538,15 @@ function renderFrame(
   // Maintain aspect, add 10% padding
   const scaleX = (INNER_W * 0.85) / rangeX;
   const scaleY = (INNER_H * 0.85) / rangeY;
-  const scale  = Math.min(scaleX, scaleY);
-  const offX   = INNER_X + (INNER_W - rangeX * scale) / 2;
-  const offY   = INNER_Y + (INNER_H - rangeY * scale) / 2;
+  const scale = Math.min(scaleX, scaleY);
+  const offX = INNER_X + (INNER_W - rangeX * scale) / 2;
+  const offY = INNER_Y + (INNER_H - rangeY * scale) / 2;
 
   const wx = (worldX: number) => offX + (worldX - minX) * scale;
   const wy = (worldY: number) => offY + (worldY - minY) * scale;
 
   // Determine current sample index
-  const sIdx = Math.min(
-    Math.floor(t * (samples.length - 1)),
-    samples.length - 1
-  );
+  const sIdx = Math.min(Math.floor(t * (samples.length - 1)), samples.length - 1);
 
   // Draw full ghosted trail
   if (samples.length > 1) {
@@ -537,14 +582,27 @@ function renderFrame(
     const px = wx(cur.x);
     const py = wy(cur.y);
     const team = teamFromName(header.clientName);
-    const timeStr = `${String(Math.floor(currentTimeSec / 60)).padStart(2,"0")}:${String(Math.floor(currentTimeSec % 60)).padStart(2,"0")}`;
-    drawPlayerIcon(ctx, px, py, cur.yaw, team, true, header.clientName.slice(0, 14), timeStr);
+    const timeStr = `${String(Math.floor(currentTimeSec / 60)).padStart(2, "0")}:${String(Math.floor(currentTimeSec % 60)).padStart(2, "0")}`;
+    drawPlayerIcon(
+      ctx,
+      px,
+      py,
+      cur.yaw,
+      team,
+      true,
+      header.clientName.slice(0, 14),
+      timeStr
+    );
   }
 
   // Map frame label
   ctx.font = "bold 10px Arial, sans-serif";
   ctx.fillStyle = "rgba(255,255,255,0.25)";
-  ctx.fillText(`FRAME ${frameIdx + 1} / ${totalFrames}  •  TICK ${samples[Math.min(sIdx, samples.length-1)]?.tick ?? 0}`, PAD, H - 18);
+  ctx.fillText(
+    `FRAME ${frameIdx + 1} / ${totalFrames}  •  TICK ${samples[Math.min(sIdx, samples.length - 1)]?.tick ?? 0}`,
+    PAD,
+    H - 18
+  );
 
   // Compass rose (top-right of map area)
   {
@@ -553,10 +611,15 @@ function renderFrame(
     const cr = 16;
     ctx.strokeStyle = "rgba(255,255,255,0.2)";
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(cx, cy, cr, 0, Math.PI * 2); ctx.stroke();
-    const dirs = [["N", 0], ["E", 90], ["S", 180], ["W", 270]] as [string, number][];
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+    ctx.stroke();
+    const dirs = [["N", 0], ["E", 90], ["S", 180], ["W", 270]] as [
+      string,
+      number
+    ][];
     for (const [d, a] of dirs) {
-      const r = (a - 90) * Math.PI / 180;
+      const r = ((a - 90) * Math.PI) / 180;
       ctx.font = "bold 8px Arial, sans-serif";
       ctx.fillStyle = "rgba(255,255,255,0.4)";
       ctx.textAlign = "center";
@@ -565,57 +628,92 @@ function renderFrame(
     ctx.textAlign = "left";
   }
 
-  drawHUD(ctx, HUD_X, HUD_Y, HUD_W, HUD_H, header, currentTimeSec, samples.length, frameIdx, totalFrames);
+  drawHUD(
+    ctx,
+    HUD_X,
+    HUD_Y,
+    HUD_W,
+    HUD_H,
+    header,
+    currentTimeSec,
+    samples.length,
+    frameIdx,
+    totalFrames
+  );
 }
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
+// ─── Handler ───────────────────────────────────────────────────────────
 
-class tf2demoHandler {
-  init() {
-    return {
-      name: "TF2 Demo",
-      from: [".dem"],
-      to: [
-        { ext: ".mp4",  mime: "video/mp4",       label: "MP4 (H.264)" },
-        { ext: ".webm", mime: "video/webm",       label: "WebM (VP8)"  },
-      ],
-      category: ["other"],
-    };
+class Tf2DemoHandler implements FormatHandler {
+  public name: string = "TF2 Demo";
+  public supportedFormats: FileFormat[] = [
+    {
+      name: "MP4 (H.264)",
+      format: "mp4",
+      extension: "mp4",
+      mime: "video/mp4",
+      from: false,
+      to: true,
+      internal: "mp4",
+      category: "video",
+      lossless: false,
+    },
+    {
+      name: "WebM (VP8)",
+      format: "webm",
+      extension: "webm",
+      mime: "video/webm",
+      from: false,
+      to: true,
+      internal: "webm",
+      category: "video",
+      lossless: false,
+    },
+  ];
+  public ready: boolean = false;
+
+  async init(): Promise<void> {
+    this.ready = true;
   }
 
-  async convert(
-    file: File,
-    args: { target: string; updateProgress: (n: number) => void }
-  ): Promise<Blob> {
-    const { target, updateProgress } = args;
+  async doConvert(
+    inputFiles: FileData[],
+    inputFormat: FileFormat,
+    outputFormat: FileFormat,
+    args?: string[]
+  ): Promise<FileData[]> {
+    if (inputFiles.length === 0) {
+      throw new Error("No input files provided");
+    }
+
+    const file = inputFiles[0];
 
     // 1. Read file
-    updateProgress(2);
-    const ab  = await file.arrayBuffer();
-    const buf = new Uint8Array(ab);
+    const buf = file.bytes;
 
     // 2. Validate + parse header
-    updateProgress(5);
     const header = parseHeader(buf);
-    if (!header) throw new Error("Not a valid TF2/HL2 demo (missing HL2DEMO stamp).");
+    if (!header)
+      throw new Error(
+        "Not a valid TF2/HL2 demo (missing HL2DEMO stamp)."
+      );
 
     // 3. Parse tick samples
-    updateProgress(8);
     const { samples } = parseFrames(buf, 1072, header.playbackTicks);
     if (samples.length < 2) {
-      throw new Error(`Demo parsed but found only ${samples.length} position sample(s). The file may be corrupt or a zero-tick demo.`);
+      throw new Error(
+        `Demo parsed but found only ${samples.length} position sample(s). The file may be corrupt or a zero-tick demo.`
+      );
     }
 
     // 4. Setup canvas + FFmpeg
-    updateProgress(12);
     const canvas = new OffscreenCanvas(W, H);
-    const ctx    = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+    const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
     if (!ctx) throw new Error("OffscreenCanvas 2D unavailable in this browser.");
 
     const ff = await getFFmpeg();
-    updateProgress(18);
 
-    const duration    = Math.max(header.playbackTime, 1);
+    const duration = Math.max(header.playbackTime, 1);
     const totalFrames = Math.ceil(duration * FPS);
 
     // 5. Encode via rawvideo pipe — NO intermediate files, NO concat list
@@ -623,69 +721,90 @@ class tf2demoHandler {
     // write it once to FFmpeg's VFS as "input.raw", then encode.
     // This is the most reliable approach in ffmpeg.wasm.
     const bytesPerFrame = W * H * 4; // RGBA
-    const rawAll        = new Uint8Array(bytesPerFrame * totalFrames);
+    const rawAll = new Uint8Array(bytesPerFrame * totalFrames);
 
     for (let i = 0; i < totalFrames; i++) {
       renderFrame(ctx, header, samples, i, totalFrames);
       const imageData = ctx.getImageData(0, 0, W, H);
       rawAll.set(imageData.data, i * bytesPerFrame);
-
-      if (i % 5 === 0) {
-        updateProgress(18 + Math.floor((i / totalFrames) * 55));
-      }
     }
-
-    updateProgress(73);
 
     // Write single raw blob
     await ff.writeFile("input.raw", rawAll);
-    updateProgress(76);
 
     // Build FFmpeg command based on output format
-    const isWebm = target === ".webm";
+    const isWebm = outputFormat.format === "webm";
     const outFile = isWebm ? "out.webm" : "out.mp4";
 
     const cmd = isWebm
       ? [
-          "-f",       "rawvideo",
-          "-pix_fmt", "rgba",
-          "-s",       `${W}x${H}`,
-          "-r",       String(FPS),
-          "-i",       "input.raw",
-          "-c:v",     "libvpx",
-          "-b:v",     "2M",
-          "-pix_fmt", "yuv420p",
+          "-f",
+          "rawvideo",
+          "-pix_fmt",
+          "rgba",
+          "-s",
+          `${W}x${H}`,
+          "-r",
+          String(FPS),
+          "-i",
+          "input.raw",
+          "-c:v",
+          "libvpx",
+          "-b:v",
+          "2M",
+          "-pix_fmt",
+          "yuv420p",
           outFile,
         ]
       : [
-          "-f",       "rawvideo",
-          "-pix_fmt", "rgba",
-          "-s",       `${W}x${H}`,
-          "-r",       String(FPS),
-          "-i",       "input.raw",
-          "-c:v",     "libx264",
-          "-preset",  "ultrafast",
-          "-crf",     "22",
-          "-pix_fmt", "yuv420p",
-          "-movflags", "+faststart",
+          "-f",
+          "rawvideo",
+          "-pix_fmt",
+          "rgba",
+          "-s",
+          `${W}x${H}`,
+          "-r",
+          String(FPS),
+          "-i",
+          "input.raw",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast",
+          "-crf",
+          "22",
+          "-pix_fmt",
+          "yuv420p",
+          "-movflags",
+          "+faststart",
           outFile,
         ];
 
     await ff.exec(cmd);
-    updateProgress(94);
 
     // 6. Read output
-    const data = await ff.readFile(outFile) as Uint8Array;
+    const data = (await ff.readFile(outFile)) as Uint8Array;
 
     // Cleanup
-    try { await ff.deleteFile("input.raw"); }  catch { /* ok */ }
-    try { await ff.deleteFile(outFile); }       catch { /* ok */ }
+    try {
+      await ff.deleteFile("input.raw");
+    } catch {
+      /* ok */
+    }
+    try {
+      await ff.deleteFile(outFile);
+    } catch {
+      /* ok */
+    }
 
-    updateProgress(100);
-
+    const outputName =
+      file.name.split(".").slice(0, -1).join(".") +
+      "." +
+      outputFormat.extension;
     const mime = isWebm ? "video/webm" : "video/mp4";
-    return new Blob([data], { type: mime });
+
+    return [{ bytes: data, name: outputName }];
   }
 }
 
-export default tf2demoHandler;
+export default Tf2DemoHandler;
