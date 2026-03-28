@@ -1,5 +1,6 @@
 import type { FormatHandler } from "../FormatHandler.ts";
 
+import tf2demoHandler from "./tf2demo.ts";
 import canvasToBlobHandler from "./canvasToBlob.ts";
 import meydaHandler from "./meyda.ts";
 import htmlEmbedHandler from "./htmlEmbed.ts";
@@ -74,6 +75,7 @@ import cssHandler from "./css.ts";
 import TypstHandler from "./typst.ts";
 
 const handlers: FormatHandler[] = [];
+try { handlers.push(new tf2demoHandler()) } catch (_) { };
 try { handlers.push(new svgTraceHandler()) } catch (_) { };
 try { handlers.push(new canvasToBlobHandler()) } catch (_) { };
 try { handlers.push(new meydaHandler()) } catch (_) { };
